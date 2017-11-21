@@ -32,6 +32,8 @@ import com.rapid7.client.dcerpc.mslsad.messages.LsarLookupSIDsResponse;
 import com.rapid7.client.dcerpc.mslsad.messages.LsarOpenPolicy2Request;
 import com.rapid7.client.dcerpc.mslsad.messages.LsarQueryInformationPolicyRequest;
 import com.rapid7.client.dcerpc.mslsad.objects.LSAPRTranslatedName;
+import com.rapid7.client.dcerpc.mslsad.objects.LSAPRTranslatedSID;
+import com.rapid7.client.dcerpc.mslsad.objects.LSAPRTrustInformation;
 import com.rapid7.client.dcerpc.objects.ContextHandle;
 import com.rapid7.client.dcerpc.objects.MalformedSIDException;
 import com.rapid7.client.dcerpc.objects.RPCSID;
@@ -95,9 +97,31 @@ public class LocalSecurityAuthorityService extends Service {
                 SystemErrorCode.ERROR_SUCCESS, SystemErrorCode.STATUS_INVALID_HANDLE);
     }
 
-    public LsarLookupNamesResponse lookupNames(final ContextHandle policyHandle, final String... names) throws IOException {
+    /**
+     *
+     * @param policyHandle Handle to the policy
+     * @param names Names to lookup SIDs for
+     * @return Returns a list of SIDs (with RID suffixed)
+     * @throws IOException Thrown if exception happens at the RPC layer
+     */
+    public String[] lookupNames(final ContextHandle policyHandle, final String... names)
+            throws IOException {
         final LsarLookupNamesRequest request = new LsarLookupNamesRequest(policyHandle, names);
-        return callExpectSuccess(request, "LsarLookupNames");
+        LsarLookupNamesResponse response = callExpect(request, "LsarLookupNames",
+                SystemErrorCode.ERROR_SUCCESS,
+                SystemErrorCode.STATUS_SOME_NOT_MAPPED);
+        LSAPRTranslatedSID[] sidArray = response.getLsaprTranslatedSIDs().getLsaprTranslatedSIDArray();
+        LSAPRTrustInformation[] domainArray = response.getLsaprReferencedDomainList().getLsaprTrustInformations();
+        String[] SIDs = new String[sidArray.length];
+        for (int i = 0; i < sidArray.length; i++) {
+            try {
+                SIDs[i] = domainArray[(int) sidArray[i].getDomainIndex()].getSid().toString();
+                SIDs[i] += "-" + sidArray[i].getRelativeId();
+            } catch (IndexOutOfBoundsException e) {
+                SIDs[i] = null; //DomainIndex can be -1 if name is unknown / domain SID does not exist
+            }
+        }
+        return SIDs;
     }
 
     /**
@@ -111,7 +135,6 @@ public class LocalSecurityAuthorityService extends Service {
     public String[] lookupSIDs(ContextHandle policyHandle, String... SIDs)
         throws IOException, MalformedSIDException
     {
-        String[] mappedNames;
         final LsarLookupSIDsRequest request =
             new LsarLookupSIDsRequest(policyHandle, SIDs);
         final LsarLookupSIDsResponse lsarLookupSIDsResponse = callExpect(request, "LsarLookupSIDs",
@@ -119,7 +142,7 @@ public class LocalSecurityAuthorityService extends Service {
                 SystemErrorCode.STATUS_SOME_NOT_MAPPED);
 
         LSAPRTranslatedName[] nameArray = lsarLookupSIDsResponse.getLsaprTranslatedNames().getlsaprTranslatedNameArray();
-        mappedNames = new String[nameArray.length];
+        String[] mappedNames = new String[nameArray.length];
         for (int i = 0; i < nameArray.length; i++) {
             mappedNames[i] = nameArray[i].getName().getValue();
         }

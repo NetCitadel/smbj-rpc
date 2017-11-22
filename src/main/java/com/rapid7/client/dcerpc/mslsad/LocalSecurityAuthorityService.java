@@ -39,6 +39,7 @@ import com.rapid7.client.dcerpc.objects.MalformedSIDException;
 import com.rapid7.client.dcerpc.objects.RPCSID;
 import com.rapid7.client.dcerpc.objects.RPCUnicodeString;
 import com.rapid7.client.dcerpc.service.Service;
+import com.rapid7.client.dcerpc.service.dto.SID;
 import com.rapid7.client.dcerpc.transport.RPCTransport;
 import java.io.IOException;
 
@@ -117,19 +118,24 @@ public class LocalSecurityAuthorityService extends Service {
      * @return Returns a list of SIDs (with RID suffixed)
      * @throws IOException Thrown if exception happens at the RPC layer
      */
-    public String[] lookupNames(final ContextHandle policyHandle, final String... names)
+    public SID[] lookupNames(final ContextHandle policyHandle, final String... names)
             throws IOException {
         final LsarLookupNamesRequest request = new LsarLookupNamesRequest(policyHandle, names);
         LsarLookupNamesResponse response = callExpect(request, "LsarLookupNames",
                 SystemErrorCode.ERROR_SUCCESS,
                 SystemErrorCode.STATUS_SOME_NOT_MAPPED);
-        LSAPRTranslatedSID[] sidArray = response.getLsaprTranslatedSIDs().getLsaprTranslatedSIDArray();
+        LSAPRTranslatedSID[] translatedSIDs = response.getLsaprTranslatedSIDs().getLsaprTranslatedSIDArray();
         LSAPRTrustInformation[] domainArray = response.getLsaprReferencedDomainList().getLsaprTrustInformations();
-        String[] SIDs = new String[sidArray.length];
-        for (int i = 0; i < sidArray.length; i++) {
+        // Create DTO SIDs
+        SID[] SIDs = new SID[translatedSIDs.length];
+        for (int i = 0; i < translatedSIDs.length; i++) {
             try {
-                SIDs[i] = domainArray[(int) sidArray[i].getDomainIndex()].getSid().toString();
-                SIDs[i] += "-" + sidArray[i].getRelativeId();
+                //get domain SID
+                int domainIndex = (int) translatedSIDs[i].getDomainIndex();
+                RPCSID sid = domainArray[domainIndex].getSid();
+                SID dtoSID = new SID((byte)sid.getRevision(), sid.getIdentifierAuthority(), sid.getSubAuthority());
+                // add RID to SID
+                SIDs[i] = dtoSID.addRelativeId(translatedSIDs[i].getRelativeId());
             } catch (IndexOutOfBoundsException e) {
                 SIDs[i] = null; //DomainIndex can be -1 if name is unknown / domain SID does not exist
             }

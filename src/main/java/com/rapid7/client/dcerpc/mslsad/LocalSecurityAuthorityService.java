@@ -135,7 +135,7 @@ public class LocalSecurityAuthorityService extends Service {
                 RPCSID sid = domainArray[domainIndex].getSid();
                 SID dtoSID = new SID((byte)sid.getRevision(), sid.getIdentifierAuthority(), sid.getSubAuthority());
                 // add RID to SID
-                SIDs[i] = dtoSID.addRelativeId(translatedSIDs[i].getRelativeId());
+                SIDs[i] = dtoSID.resolveRelativeId(translatedSIDs[i].getRelativeId());
             } catch (IndexOutOfBoundsException e) {
                 SIDs[i] = null; //DomainIndex can be -1 if name is unknown / domain SID does not exist
             }

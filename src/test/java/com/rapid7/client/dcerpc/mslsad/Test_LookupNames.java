@@ -25,7 +25,6 @@ import com.rapid7.client.dcerpc.mslsad.objects.LSAPRReferencedDomainList;
 import com.rapid7.client.dcerpc.mslsad.objects.LSAPRTranslatedSIDs;
 import com.rapid7.client.dcerpc.objects.ContextHandle;
 import com.rapid7.client.dcerpc.objects.MalformedSIDException;
-import com.rapid7.client.dcerpc.objects.RPCSID;
 import com.rapid7.client.dcerpc.service.dto.SID;
 import com.rapid7.client.dcerpc.transport.RPCTransport;
 import java.io.IOException;
@@ -86,9 +85,9 @@ public class Test_LookupNames {
 
         SID domainSID = new SID((byte)1,new byte[]{0,0,0,0,0,5}, new long[]{21,2947824804l,3171091966l, 890232435l});
         SID[] expectedSIDs = new SID[4];
-        expectedSIDs[0] = domainSID.addRelativeId(500);
-        expectedSIDs[1] = domainSID.addRelativeId(1001);
-        expectedSIDs[2] = domainSID.addRelativeId(501);
+        expectedSIDs[0] = domainSID.resolveRelativeId(500);
+        expectedSIDs[1] = domainSID.resolveRelativeId(1001);
+        expectedSIDs[2] = domainSID.resolveRelativeId(501);
         expectedSIDs[3] = null;
 
         assertArrayEquals(SIDs, expectedSIDs);

@@ -37,7 +37,7 @@ public class Test_RCloseHandle {
 
     @Test
     public void encodeCloseHandleRequest() throws IOException {
-        ContextHandle handle = new ContextHandle(Hex.decode("000000001CCD2628477770489D015EEE8CCFFB01"));
+        byte[] handle = Hex.decode("000000001CCD2628477770489D015EEE8CCFFB01");
         RCloseServiceHandleRequest request = new RCloseServiceHandleRequest(handle);
         assertEquals(request.toHexString(), "000000001ccd2628477770489d015eee8ccffb01" );
     }

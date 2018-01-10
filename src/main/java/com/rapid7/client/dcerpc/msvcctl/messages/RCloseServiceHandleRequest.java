@@ -21,20 +21,28 @@
 
 package com.rapid7.client.dcerpc.msvcctl.messages;
 
-import com.rapid7.client.dcerpc.dto.ContextHandle;
+import java.io.IOException;
 import com.rapid7.client.dcerpc.io.PacketOutput;
 import com.rapid7.client.dcerpc.messages.HandleResponse;
 import com.rapid7.client.dcerpc.messages.RequestCall;
 
-import java.io.IOException;
-
+/**
+ * <blockquote><pre>The RCloseServiceHandle method is called by the client. In response, the server releases the handle to the specified service or the SCM database.
+ *
+ *      DWORD RCloseServiceHandle(
+ *          [in, out] LPSC_RPC_HANDLE hSCObject
+ *      );
+ *
+ * hSCObject: An SC_RPC_HANDLE (section 2.2.4) data type that defines the handle to a service record or to the SCM database that MUST have been created previously using one of the open methods specified in section 3.1.4.</pre></blockquote>
+ */
 public class RCloseServiceHandleRequest extends RequestCall<HandleResponse> {
-    private final static short OP_NUM = 0;
-    private final ContextHandle serviceHandle;
+    public static final short OP_NUM = 0;
+    // <NDR: fixed array> [in, out] LPSC_RPC_HANDLE hSCObject
+    private final byte[] hSCObject;
 
-    public RCloseServiceHandleRequest(ContextHandle handle) {
+    public RCloseServiceHandleRequest(final byte[] hSCObject) {
         super(OP_NUM);
-        this.serviceHandle = handle;
+        this.hSCObject = hSCObject;
     }
 
     @Override
@@ -44,6 +52,7 @@ public class RCloseServiceHandleRequest extends RequestCall<HandleResponse> {
 
     @Override
     public void marshal(PacketOutput packetOut) throws IOException {
-        packetOut.write(serviceHandle.getBytes());
+        // <NDR: fixed array> [in, out] LPSC_RPC_HANDLE hSCObject
+        packetOut.write(hSCObject);
     }
 }

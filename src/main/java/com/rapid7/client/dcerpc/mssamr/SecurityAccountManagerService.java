@@ -22,7 +22,6 @@ import java.io.IOException;
 import java.rmi.UnmarshalException;
 import java.util.ArrayList;
 import java.util.List;
-import com.google.common.base.Strings;
 import com.rapid7.client.dcerpc.RPCException;
 import com.rapid7.client.dcerpc.dto.ContextHandle;
 import com.rapid7.client.dcerpc.dto.SID;
@@ -32,12 +31,16 @@ import com.rapid7.client.dcerpc.mssamr.dto.AliasGeneralInformation;
 import com.rapid7.client.dcerpc.mssamr.dto.AliasHandle;
 import com.rapid7.client.dcerpc.mssamr.dto.DomainDisplayGroup;
 import com.rapid7.client.dcerpc.mssamr.dto.DomainHandle;
-import com.rapid7.client.dcerpc.mssamr.dto.DomainPasswordInformation;
+import com.rapid7.client.dcerpc.mssamr.dto.DomainLockoutInfo;
+import com.rapid7.client.dcerpc.mssamr.dto.DomainLogoffInfo;
+import com.rapid7.client.dcerpc.mssamr.dto.DomainPasswordInfo;
 import com.rapid7.client.dcerpc.mssamr.dto.GroupGeneralInformation;
 import com.rapid7.client.dcerpc.mssamr.dto.GroupHandle;
 import com.rapid7.client.dcerpc.mssamr.dto.LogonHours;
+import com.rapid7.client.dcerpc.mssamr.dto.Membership;
 import com.rapid7.client.dcerpc.mssamr.dto.MembershipWithAttributes;
 import com.rapid7.client.dcerpc.mssamr.dto.MembershipWithName;
+import com.rapid7.client.dcerpc.mssamr.dto.MembershipWithNameAndUse;
 import com.rapid7.client.dcerpc.mssamr.dto.MembershipWithUse;
 import com.rapid7.client.dcerpc.mssamr.dto.SecurityDescriptor;
 import com.rapid7.client.dcerpc.mssamr.dto.ServerHandle;
@@ -58,6 +61,8 @@ import com.rapid7.client.dcerpc.mssamr.messages.SamrGetMembersInAliasRequest;
 import com.rapid7.client.dcerpc.mssamr.messages.SamrGetMembersInGroupRequest;
 import com.rapid7.client.dcerpc.mssamr.messages.SamrGetMembersInGroupResponse;
 import com.rapid7.client.dcerpc.mssamr.messages.SamrLookupDomainInSamServerRequest;
+import com.rapid7.client.dcerpc.mssamr.messages.SamrLookupIdsInDomainRequest;
+import com.rapid7.client.dcerpc.mssamr.messages.SamrLookupIdsInDomainResponse;
 import com.rapid7.client.dcerpc.mssamr.messages.SamrLookupNamesInDomainRequest;
 import com.rapid7.client.dcerpc.mssamr.messages.SamrLookupNamesInDomainResponse;
 import com.rapid7.client.dcerpc.mssamr.messages.SamrOpenAliasRequest;
@@ -80,17 +85,20 @@ import com.rapid7.client.dcerpc.mssamr.objects.SAMPRAliasGeneralInformation;
 import com.rapid7.client.dcerpc.mssamr.objects.SAMPRDomainDisplayGroup;
 import com.rapid7.client.dcerpc.mssamr.objects.SAMPRDomainDisplayGroupBuffer;
 import com.rapid7.client.dcerpc.mssamr.objects.SAMPRDomainLockoutInfo;
-import com.rapid7.client.dcerpc.mssamr.objects.SAMPRDomainLogOffInfo;
+import com.rapid7.client.dcerpc.mssamr.objects.SAMPRDomainLogoffInfo;
 import com.rapid7.client.dcerpc.mssamr.objects.SAMPRDomainPasswordInfo;
 import com.rapid7.client.dcerpc.mssamr.objects.SAMPRGroupGeneralInformation;
+import com.rapid7.client.dcerpc.mssamr.objects.SAMPRLogonHours;
+import com.rapid7.client.dcerpc.mssamr.objects.SAMPRPSIDArray;
 import com.rapid7.client.dcerpc.mssamr.objects.SAMPRRIDEnumeration;
+import com.rapid7.client.dcerpc.mssamr.objects.SAMPRSRSecurityDescriptor;
 import com.rapid7.client.dcerpc.mssamr.objects.SAMPRUserAllInformation;
 import com.rapid7.client.dcerpc.mssamr.objects.UserInfo;
 import com.rapid7.client.dcerpc.objects.RPCSID;
 import com.rapid7.client.dcerpc.objects.RPCUnicodeString;
+import com.rapid7.client.dcerpc.objects.RPCUnicodeString.NonNullTerminated;
 import com.rapid7.client.dcerpc.service.Service;
 import com.rapid7.client.dcerpc.transport.RPCTransport;
-
 import static com.rapid7.client.dcerpc.mserref.SystemErrorCode.ERROR_MORE_ENTRIES;
 import static com.rapid7.client.dcerpc.mserref.SystemErrorCode.ERROR_NO_MORE_ITEMS;
 import static com.rapid7.client.dcerpc.mserref.SystemErrorCode.ERROR_SUCCESS;
@@ -126,7 +134,7 @@ public class SecurityAccountManagerService extends Service {
      */
     public ServerHandle openServer(String serverName) throws IOException {
         final SamrConnect2Request request =
-                new SamrConnect2Request(Strings.nullToEmpty(serverName), MAXIMUM_ALLOWED);
+                new SamrConnect2Request(parseWCharNT(serverName), MAXIMUM_ALLOWED);
         return parseServerHandle(callExpectSuccess(request, "SamrConnect2"));
     }
 
@@ -207,11 +215,10 @@ public class SecurityAccountManagerService extends Service {
         final SamrCloseHandleRequest request =
                 new SamrCloseHandleRequest(parseHandle(handle));
         final HandleResponse response = call(request);
-        if (SystemErrorCode.ERROR_SUCCESS.is(response.getReturnValue())) {
+        if (SystemErrorCode.ERROR_SUCCESS.is(response.getReturnValue()))
             return true;
-        } else if (SystemErrorCode.STATUS_INVALID_HANDLE.is(response.getReturnValue())) {
+        else if (SystemErrorCode.STATUS_INVALID_HANDLE.is(response.getReturnValue()))
             return false;
-        }
         throw new RPCException("SamrCloseHandle", response.getReturnValue());
     }
 
@@ -348,6 +355,20 @@ public class SecurityAccountManagerService extends Service {
     /**
      * Gets the user RID and name pairs for the provided domain.
      * Max buffer size will be used.
+     * All users will be returned (UserAccountControl=0)
+     *
+     * @param domainHandle A valid domain handle obtained from {@link #openDomain(ServerHandle, SID)}.
+     * @return The enumerated users.
+     * @throws IOException On issue with communication or marshalling.
+     */
+    public MembershipWithName[] getUsersForDomain(final DomainHandle domainHandle)
+            throws IOException {
+        return getUsersForDomain(domainHandle, 0);
+    }
+
+    /**
+     * Gets the user RID and name pairs for the provided domain.
+     * Max buffer size will be used.
      *
      * @param domainHandle A valid domain handle obtained from {@link #openDomain(ServerHandle, SID)}.
      * @param userAccountControl The UserAccountControl flags that filters the returned users.
@@ -403,6 +424,8 @@ public class SecurityAccountManagerService extends Service {
                 new SamrQueryInformationUserRequest.UserAllInformation(parseHandle(userHandle));
         final SAMPRUserAllInformation userInformation =
                 callExpectSuccess(request, "SamrQueryInformationUser[21]").getUserInformation();
+        if (userInformation == null)
+            return null;
         try {
             return new UserAllInformation(
                     userInformation.getLastLogon(),
@@ -411,25 +434,25 @@ public class SecurityAccountManagerService extends Service {
                     userInformation.getAccountExpires(),
                     userInformation.getPasswordCanChange(),
                     userInformation.getPasswordMustChange(),
-                    userInformation.getUserName().getValue(),
-                    userInformation.getFullName().getValue(),
-                    userInformation.getHomeDirectory().getValue(),
-                    userInformation.getHomeDirectoryDrive().getValue(),
-                    userInformation.getScriptPath().getValue(),
-                    userInformation.getProfilePath().getValue(),
-                    userInformation.getAdminComment().getValue(),
-                    userInformation.getWorkStations().getValue(),
-                    userInformation.getUserComment().getValue(),
-                    userInformation.getParameters().getValue(),
+                    parseRPCUnicodeString(userInformation.getUserName()),
+                    parseRPCUnicodeString(userInformation.getFullName()),
+                    parseRPCUnicodeString(userInformation.getHomeDirectory()),
+                    parseRPCUnicodeString(userInformation.getHomeDirectoryDrive()),
+                    parseRPCUnicodeString(userInformation.getScriptPath()),
+                    parseRPCUnicodeString(userInformation.getProfilePath()),
+                    parseRPCUnicodeString(userInformation.getAdminComment()),
+                    parseRPCUnicodeString(userInformation.getWorkStations()),
+                    parseRPCUnicodeString(userInformation.getUserComment()),
+                    parseRPCUnicodeString(userInformation.getParameters()),
                     userInformation.getLmOwfPassword().getBuffer(),
                     userInformation.getNtOwfPassword().getBuffer(),
                     userInformation.getPrivateData().getValue(),
-                    userInformation.getSecurityDescriptor().getSecurityDescriptor(),
+                    parseSAMPRSRSecurityDescriptor(userInformation.getSecurityDescriptor()),
                     userInformation.getUserId(),
                     userInformation.getPrimaryGroupId(),
                     userInformation.getUserAccountControl(),
                     userInformation.getWhichFields(),
-                    new LogonHours(userInformation.getLogonHours().getLogonHours()),
+                    parseSAMPRLogonHours(userInformation.getLogonHours()),
                     userInformation.getBadPasswordCount(),
                     userInformation.getLogonCount(),
                     userInformation.getCountryCode(),
@@ -456,11 +479,13 @@ public class SecurityAccountManagerService extends Service {
                 new SamrQueryInformationGroupRequest.GroupGeneralInformation(parseHandle(groupHandle));
         final SAMPRGroupGeneralInformation groupGeneralInformation =
                 callExpectSuccess(request, "SamrQueryInformationGroup[1]").getGroupInformation();
+        if (groupGeneralInformation == null)
+            return null;
         return new GroupGeneralInformation(
-                groupGeneralInformation.getName().getValue(),
+                parseRPCUnicodeString(groupGeneralInformation.getName()),
                 groupGeneralInformation.getAttributes(),
                 groupGeneralInformation.getMemberCount(),
-                groupGeneralInformation.getAdminComment().getValue());
+                parseRPCUnicodeString(groupGeneralInformation.getAdminComment()));
     }
 
     /**
@@ -475,10 +500,12 @@ public class SecurityAccountManagerService extends Service {
                 new SamrQueryInformationAliasRequest.AliasGeneralInformation(parseHandle(aliasHandle));
         final SAMPRAliasGeneralInformation aliasGeneralInformation =
                 callExpectSuccess(request, "SamrQueryInformationAlias[1]").getAliasInformation();
+        if (aliasGeneralInformation == null)
+            return null;
         return new AliasGeneralInformation(
-                aliasGeneralInformation.getName().getValue(),
+                parseRPCUnicodeString(aliasGeneralInformation.getName()),
                 aliasGeneralInformation.getMemberCount(),
-                aliasGeneralInformation.getAdminComment().getValue());
+                parseRPCUnicodeString(aliasGeneralInformation.getAdminComment()));
     }
 
     /**
@@ -501,12 +528,14 @@ public class SecurityAccountManagerService extends Service {
      * @throws IOException Thrown if either a communication failure is encountered, or the call
      * returns an unsuccessful response.
      */
-    public DomainPasswordInformation getDomainPasswordInfo(final DomainHandle domainHandle) throws IOException {
+    public DomainPasswordInfo getDomainPasswordInfo(final DomainHandle domainHandle) throws IOException {
         final SamrQueryInformationDomainRequest.DomainPasswordInformation request =
                 new SamrQueryInformationDomainRequest.DomainPasswordInformation(parseHandle(domainHandle));
         final SAMPRDomainPasswordInfo passwordInfo =
                 callExpectSuccess(request, "SamrQueryInformationDomain[1]").getDomainInformation();
-        return new DomainPasswordInformation(
+        if (passwordInfo == null)
+            return null;
+        return new DomainPasswordInfo(
                 passwordInfo.getMinPasswordLength(),
                 passwordInfo.getPasswordHistoryLength(),
                 passwordInfo.getPasswordProperties(),
@@ -521,10 +550,14 @@ public class SecurityAccountManagerService extends Service {
      * @throws IOException Thrown if either a communication failure is encountered, or the call
      * returns an unsuccessful response.
      */
-    public SAMPRDomainLogOffInfo getDomainLogOffInfo(final DomainHandle domainHandle) throws IOException {
+    public DomainLogoffInfo getDomainLogOffInfo(final DomainHandle domainHandle) throws IOException {
         final SamrQueryInformationDomainRequest.DomainLogOffInformation request =
                 new SamrQueryInformationDomainRequest.DomainLogOffInformation(parseHandle(domainHandle));
-        return callExpectSuccess(request, "SamrQueryInformationDomain[3]").getDomainInformation();
+        final SAMPRDomainLogoffInfo samprDomainLogoffInfo =
+                callExpectSuccess(request, "SamrQueryInformationDomain[3]").getDomainInformation();
+        if (samprDomainLogoffInfo == null)
+            return null;
+        return new DomainLogoffInfo(samprDomainLogoffInfo.getForceLogoff());
     }
 
     /**
@@ -534,10 +567,15 @@ public class SecurityAccountManagerService extends Service {
      * @throws IOException Thrown if either a communication failure is encountered, or the call
      * returns an unsuccessful response.
      */
-    public SAMPRDomainLockoutInfo getDomainLockoutInfo(final DomainHandle domainHandle) throws IOException {
+    public DomainLockoutInfo getDomainLockoutInfo(final DomainHandle domainHandle) throws IOException {
         final SamrQueryInformationDomain2Request.DomainLockoutInformation request =
                 new SamrQueryInformationDomain2Request.DomainLockoutInformation(parseHandle(domainHandle));
-        return callExpectSuccess(request, "SamrQueryInformationDomain2[12]").getDomainInformation();
+        final SAMPRDomainLockoutInfo samprDomainLockoutInfo =
+                callExpectSuccess(request, "SamrQueryInformationDomain2[12]").getDomainInformation();
+        if (samprDomainLockoutInfo == null)
+            return null;
+        return new DomainLockoutInfo(samprDomainLockoutInfo.getLockoutDuration(),
+                samprDomainLockoutInfo.getLockoutObservationWindow(), samprDomainLockoutInfo.getLockoutThreshold());
     }
 
     /**
@@ -599,8 +637,10 @@ public class SecurityAccountManagerService extends Service {
         final DomainDisplayGroup[] ret = new DomainDisplayGroup[displayGroups.size()];
         int i = 0;
         for (SAMPRDomainDisplayGroup displayGroup : displayGroups) {
-            ret[i++] = new DomainDisplayGroup(displayGroup.getRid(), displayGroup.getAccountName(),
-                    displayGroup.getDescription(), displayGroup.getAttributes());
+            ret[i++] = new DomainDisplayGroup(displayGroup.getRid(),
+                    parseRPCUnicodeString(displayGroup.getAccountName()),
+                    parseRPCUnicodeString(displayGroup.getDescription()),
+                    displayGroup.getAttributes());
         }
         return ret;
     }
@@ -647,9 +687,18 @@ public class SecurityAccountManagerService extends Service {
             securityInformation |= 0x08;
         final SamrQuerySecurityObjectRequest request =
                 new SamrQuerySecurityObjectRequest(parseHandle(objectHandle), securityInformation);
-        return callExpectSuccess(request, "SamrQuerySecurityObject").getSecurityDescriptor().getSecurityDescriptor();
+        return parseSAMPRSRSecurityDescriptor(callExpectSuccess(request, "SamrQuerySecurityObject").getSecurityDescriptor());
     }
 
+    /**
+     * Gets the SID of a given domain. An exception is thrown if it is not found.
+     *
+     * @param serverHandle A valid server handle obtained from {@link #openServer()}
+     * @param domainName The name of the domain to get the {@link SID} for.
+     * @return The SID for the given domain.
+     * @throws IOException Thrown if either a communication failure is encountered, or the call
+     * returns an unsuccessful response.
+     */
     public SID getSIDForDomain(final ServerHandle serverHandle, final String domainName) throws IOException {
         final SamrLookupDomainInSamServerRequest request =
                 new SamrLookupDomainInSamServerRequest(
@@ -658,12 +707,23 @@ public class SecurityAccountManagerService extends Service {
         return parseRPCSID(rpcsid);
     }
 
-    public MembershipWithUse[] getNamesInDomain(final DomainHandle domainHandle, String ... names) throws IOException {
+    /**
+     * Gets an array of {@link MembershipWithUse} information for users/groups matching the given names in the provided
+     * domain.
+     *
+     * @param domainHandle A valid domain handle obtained from {@link #openDomain(ServerHandle, SID)}
+     * @param names A list of user/group names.
+     * @return An array of user/group relativeIDs and their use; each entry corresponds 1-1 with the given name list.
+     * If an entry is null, no result was found for that name.
+     * @throws IOException Thrown if either a communication failure is encountered, or the call
+     * returns an unsuccessful response.
+     */
+    public MembershipWithUse[] lookupNamesInDomain(final DomainHandle domainHandle, String ... names) throws IOException {
         final SamrLookupNamesInDomainRequest request =
                 new SamrLookupNamesInDomainRequest(parseHandle(domainHandle), parseNonNullTerminatedStrings(names));
         final SamrLookupNamesInDomainResponse response =
                 callExpect(request, "SamrLookupNamesInDomain",
-                        SystemErrorCode.ERROR_SUCCESS, SystemErrorCode.STATUS_SOME_NOT_MAPPED);
+                        SystemErrorCode.ERROR_SUCCESS, SystemErrorCode.STATUS_SOME_NOT_MAPPED, SystemErrorCode.STATUS_NONE_MAPPED);
         long[] relativeIds = response.getRelativeIds().getArray();
         // This is a pointer, it can be null
         if (relativeIds == null)
@@ -678,15 +738,53 @@ public class SecurityAccountManagerService extends Service {
         }
         final MembershipWithUse[] memberships = new MembershipWithUse[relativeIds.length];
         for (int i = 0; i < memberships.length; i++) {
-            memberships[i] = new MembershipWithUse(relativeIds[i], (int) uses[i]);
+            if (relativeIds[i] == 0)
+                memberships[i] = null;
+            else
+                memberships[i] = new MembershipWithUse(relativeIds[i], (int) uses[i]);
         }
         return memberships;
     }
 
     /**
+     * Gets an array of {@link MembershipWithNameAndUse} information for users/groups matching the given relative
+     * IDs in the provided domain.
+     *
+     * @param domainHandle A valid domain handle obtained from {@link #openDomain(ServerHandle, SID)}
+     * @param rids A list of relative ids.
+     * @return An array of RID, name, and their use; each entry corresponds 1-1 with the given RID list.
+     * If an entry is null, no result was found for that RID.
+     * @throws IOException Thrown if either a communication failure is encountered, or the call
+     * returns an unsuccessful response.
+     */
+    public MembershipWithNameAndUse[] lookupRIDsInDomain(final DomainHandle domainHandle, long ... rids) throws IOException {
+        final SamrLookupIdsInDomainRequest request = new SamrLookupIdsInDomainRequest(parseHandle(domainHandle), rids);
+        final SamrLookupIdsInDomainResponse response = callExpect(request, "SamrLookupIdsInDomain",
+                SystemErrorCode.ERROR_SUCCESS, SystemErrorCode.STATUS_SOME_NOT_MAPPED, SystemErrorCode.STATUS_NONE_MAPPED);
+
+        final List<NonNullTerminated> names = response.getNames();
+        long[] uses = response.getUses().getArray();
+        if (uses == null)
+            uses = new long[0];
+        final MembershipWithNameAndUse[] members = new MembershipWithNameAndUse[names.size()];
+        for (int i = 0; i < names.size(); i++) {
+            final String name = parseRPCUnicodeString(names.get(i));
+            if (name == null)
+                members[i] = null;
+            else
+                members[i] = new MembershipWithNameAndUse(rids[i], name, (int) uses[i]);
+        }
+        return members;
+    }
+
+
+    /**
      * Gets a list of {@link MembershipWithAttributes} information for groups containing the provided user handle.
      *
-     * @param userHandle User handle. Must not be {@code null}.
+     * @param userHandle A valid user handle obtained from {@link #openUser(DomainHandle, long)}
+     * @return An array of groups with their relativeIDs and attributes that the user belongs to.
+     * @throws IOException Thrown if either a communication failure is encountered, or the call
+     * returns an unsuccessful response.
      */
     public MembershipWithAttributes[] getGroupsForUser(final UserHandle userHandle) throws IOException {
         final SamrGetGroupsForUserRequest request = new SamrGetGroupsForUserRequest(parseHandle(userHandle));
@@ -697,7 +795,10 @@ public class SecurityAccountManagerService extends Service {
     /**
      * Gets a list of {@link MembershipWithAttributes} information for the members of the provided group handle.
      *
-     * @param groupHandle Group handle. Must not be {@code null}.
+     * @param groupHandle A valid group handle obtained from {@link #openGroup(DomainHandle, long)}
+     * @return An array of user/group relativeIDs and their attributes that belong to the given group.
+     * @throws IOException Thrown if either a communication failure is encountered, or the call
+     * returns an unsuccessful response.
      */
     public MembershipWithAttributes[] getMembersForGroup(GroupHandle groupHandle) throws IOException {
         final SamrGetMembersInGroupRequest request = new SamrGetMembersInGroupRequest(parseHandle(groupHandle));
@@ -711,33 +812,45 @@ public class SecurityAccountManagerService extends Service {
      * @param domainHandle The domain handle.
      * @param sids A list of SIDs.
      * @return An array of alias relativeIDs to the provided SID.
-     * @throws IOException
+     * @throws IOException Thrown if either a communication failure is encountered, or the call
+     * returns an unsuccessful response.
      */
-    public Integer[] getAliasMembership(final DomainHandle domainHandle, SID... sids) throws IOException {
+    public Membership[] getAliasMembership(final DomainHandle domainHandle, SID... sids) throws IOException {
+        final RPCSID[] rpcSids = parseSIDs(sids);
+        final SAMPRPSIDArray sidArray = new SAMPRPSIDArray(rpcSids);
         final SamrGetAliasMembershipRequest request =
-                new SamrGetAliasMembershipRequest(parseHandle(domainHandle), parseSIDs(sids));
+                new SamrGetAliasMembershipRequest(parseHandle(domainHandle), sidArray);
         final SamrGetAliasMembershipResponse response = callExpectSuccess(request, "GetAliasMembership");
-        return response.getList();
+        long[] rids = response.getMembership().getArray();
+        if (rids == null)
+            rids = new long[0];
+        final Membership[] ret = new Membership[rids.length];
+        for (int i = 0; i < ret.length; i++) {
+            ret[i] = new Membership(rids[i]);
+        }
+        return ret;
     }
 
     /**
      * Helper method for calling enumeration requests and enumerating through the buffers for
      * {@link SamrEnumerateResponse}.
      */
-    private <T> void enumerate(final List<T> list, final EnumerationCallback callback)
-            throws IOException {
+    private <T> void enumerate(final List<T> list, final EnumerationCallback callback) throws IOException {
         for (int enumContext = 0;;) {
             final SamrEnumerateResponse response = callback.request(enumContext);
             final int returnCode = response.getReturnValue();
             enumContext = response.getResumeHandle();
-            if (ERROR_MORE_ENTRIES.is(returnCode)) {
-                list.addAll(response.getList());
-            } else if (ERROR_NO_MORE_ITEMS.is(returnCode) || ERROR_SUCCESS.is(returnCode)) {
-                list.addAll(response.getList());
-                return;
+            //noinspection unchecked
+            final List<T> responseList = response.getList();
+            if (ERROR_MORE_ENTRIES.is(returnCode) || ERROR_NO_MORE_ITEMS.is(returnCode) || ERROR_SUCCESS.is(returnCode)) {
+                if (responseList != null)
+                    list.addAll(responseList);
+                if (ERROR_MORE_ENTRIES.is(returnCode))
+                    continue;
             } else {
                 throw new RPCException(response.getClass().getName(), returnCode);
             }
+            return;
         }
     }
 
@@ -769,21 +882,39 @@ public class SecurityAccountManagerService extends Service {
         return new AliasHandle(response.getHandle());
     }
 
+    private LogonHours parseSAMPRLogonHours(final SAMPRLogonHours logonHours) {
+        return new LogonHours(logonHours.getLogonHours());
+    }
+
+    private byte[] parseSAMPRSRSecurityDescriptor(final SAMPRSRSecurityDescriptor sd) {
+        if (sd == null)
+            return null;
+        return sd.getSecurityDescriptor();
+    }
+
     private MembershipWithName[] parseSAMPRRIDEnumerations(final List<? extends SAMPRRIDEnumeration> list) {
         final MembershipWithName[] memberships = new MembershipWithName[list.size()];
         int i = 0;
         for (final SAMPRRIDEnumeration info : list) {
-            memberships[i++] = new MembershipWithName(info.getRelativeId(), info.getName().getValue());
+            if (info == null)
+                memberships[i++] = null;
+            else
+                memberships[i++] = new MembershipWithName(info.getRelativeId(), info.getName().getValue());
         }
         return memberships;
     }
 
-    private MembershipWithAttributes[] parseGroupMemberships(final List<GroupMembership> list) {
-        final MembershipWithAttributes[] memberships = new MembershipWithAttributes[list.size()];
-        int i = 0;
-        for (GroupMembership groupMembership : list) {
-            memberships[i++] = new MembershipWithAttributes(groupMembership.getRelativeID(), groupMembership.getAttributes());
+    private MembershipWithAttributes[] parseGroupMemberships(final List<GroupMembership> groupMemberships) {
+        if (groupMemberships == null)
+            return new MembershipWithAttributes[0];
+        final MembershipWithAttributes[] ret = new MembershipWithAttributes[groupMemberships.size()];
+        for (int i = 0; i < ret.length; i++) {
+            final GroupMembership groupMembership = groupMemberships.get(i);
+            if (groupMembership == null)
+                ret[i] = null;
+            else
+                ret[i] = new MembershipWithAttributes(groupMembership.getRelativeID(), groupMembership.getAttributes());
         }
-        return memberships;
+        return ret;
     }
 }

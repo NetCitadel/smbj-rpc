@@ -27,16 +27,21 @@ import com.rapid7.client.dcerpc.messages.HandleResponse;
 import java.io.IOException;
 
 public class RCreateServiceWResponse extends HandleResponse{
-    private int tagId;
+    // <NDR: pointer[unsigned long]> [in, out, unique] LPDWORD lpdwTagId
+    private Integer tagId;
 
     @Override
     public void unmarshalResponse(PacketInput packetIn) throws IOException {
-        int tagIdRefId = packetIn.readReferentID();
-        if (tagIdRefId != 0) tagId = packetIn.readInt();
+        // <NDR: pointer[unsigned long]> [in, out, unique] LPDWORD lpdwTagId
+        if (packetIn.readReferentID() != 0)
+            this.tagId = packetIn.readInt();
+        else
+            this.tagId = null;
         super.unmarshalResponse(packetIn);
     }
 
-    public int getTagId() {
+    public Integer getTagId() {
         return tagId;
     }
+
 }

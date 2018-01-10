@@ -24,7 +24,7 @@ import java.util.List;
 import com.rapid7.client.dcerpc.io.PacketInput;
 import com.rapid7.client.dcerpc.io.ndr.Alignment;
 import com.rapid7.client.dcerpc.io.ndr.Unmarshallable;
-import com.rapid7.client.dcerpc.objects.RPCConformantIntegerArray;
+import com.rapid7.client.dcerpc.io.ndr.arrays.RPCConformantIntegerArray;
 
 /**
  * The SAMPR_GET_MEMBERS_BUFFER structure represents the membership of a group.
@@ -48,10 +48,6 @@ public class SAMPRGetMembersBuffer implements Unmarshallable {
     private RPCConformantIntegerArray attributes;
 
     private List<GroupMembership> array;
-
-    public int getMemberCount() {
-        return memberCount;
-    }
 
     public List<GroupMembership> getGroupMembership() {
         return array;
@@ -79,8 +75,10 @@ public class SAMPRGetMembersBuffer implements Unmarshallable {
     @Override
     public void unmarshalDeferrals(PacketInput in) throws IOException {
         in.align(Alignment.FOUR);
-        in.readUnmarshallable(members);
-        in.readUnmarshallable(attributes);
+        if (members != null)
+            in.readUnmarshallable(members);
+        if (attributes != null)
+            in.readUnmarshallable(attributes);
         array = new ArrayList<>(memberCount);
         for (int i = 0; i < memberCount; i++) {
             GroupMembership member = new GroupMembership();

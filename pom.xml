@@ -1,17 +1,17 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
    <modelVersion>4.0.0</modelVersion>
    <groupId>com.rapid7.client</groupId>
-   <artifactId>dcerpc</artifactId>
+   <artifactId>dcerpc-pfpt</artifactId>
    <packaging>jar</packaging>
-   <version>0.8.1-SNAPSHOT</version>
-   <name>dcerpc</name>
+   <version>0.8.2</version>
+   <name>dcerpc-pfpt</name>
    <url>https://www.rapid7.com</url>
    <description>DCE-RPC implementation capable of using SMBv2 via SMBJ to invoke remote procedure calls (RPC) over the IPC$ named pipe.</description>
 
    <scm>
-      <connection>scm:git:git@github.com:rapid7/smbj-rpc.git</connection>
-      <developerConnection>scm:git:git@github.com:rapid7/smbj-rpc.git</developerConnection>
-      <url>https://github.com/rapid7/smbj-rpc</url>
+      <connection>scm:git:git@github.com:NetCitadel/smbj-rpc.git</connection>
+      <developerConnection>scm:git:git@github.com:NetCitadel/smbj-rpc.git</developerConnection>
+      <url>https://github.com/NetCitadel/smbj-rpc</url>
    </scm>
 
    <developers>
@@ -151,6 +151,9 @@
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-javadoc-plugin</artifactId>
             <version>2.9.1</version>
+            <configuration>
+               <javadocExecutable>${java.home}/../bin/javadoc</javadocExecutable>
+            </configuration>
             <executions>
                <execution>
                   <id>attach-javadocs</id>
